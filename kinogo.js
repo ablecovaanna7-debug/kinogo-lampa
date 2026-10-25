@@ -1,7 +1,9 @@
 (function () {
     'use strict';
 
-    Lampa.Noty.show('Kinogo: плагин загружен');
+    console.log('[Kinogo] Plugin loaded');
 
-    console.log('Kinogo plugin loaded');
+    if (typeof Lampa !== 'undefined' && Lampa.Noty && Lampa.Noty.show) {
+        Lampa.Noty.show('Kinogo: плагин загружен');
+    }
 })();
