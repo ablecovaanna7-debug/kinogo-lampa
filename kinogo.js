@@ -1,116 +1,131 @@
 (function () {
     'use strict';
 
-    if (window.kinogoPluginStarted) return;
-    window.kinogoPluginStarted = true;
+    if (window.kinogo_plugin_ready) return;
+    window.kinogo_plugin_ready = true;
 
-    function startPlugin() {
-        var manifest = {
-            type: 'video',
-            version: '0.1.0',
-            name: 'Kinogo',
-            description: 'Поиск фильмов Kinogo',
-            component: 'kinogo_main'
-        };
+    var COMPONENT = 'kinogo_main';
+    var MENU_CLASS = 'kinogo-menu-item';
 
-        Lampa.Manifest.plugins = manifest;
+    function Kinogo() {
+        var html = $('<div class="kinogo-page"></div>');
 
-        function Kinogo(object) {
-            var self = this;
-            var html = $('<div class="kinogo-page"></div>');
-
-            this.create = function () {
-                html.html(
-                    '<div style="padding:2em">' +
+        this.create = function () {
+            html.html(
+                '<div style="padding:2em">' +
                     '<div style="font-size:2em;margin-bottom:1em">Kinogo</div>' +
-                    '<input class="kinogo-query" placeholder="Название фильма" ' +
-                    'style="padding:1em;width:80%;color:#fff;background:#333">' +
-                    '<div class="kinogo-search selector" ' +
-                    'style="padding:1em;background:#333;margin-top:1em">Найти</div>' +
-                    '<div class="kinogo-results" style="margin-top:1em"></div>' +
-                    '</div>'
-                );
-
-                html.find('.kinogo-search').on('hover:enter', search);
-                html.find('.kinogo-query').on('keydown', function (e) {
-                    if (e.key === 'Enter') search();
-                });
-
-                self.activity.render().find('.activity__body').append(html);
-                self.activity.loader(false);
-            };
-
-            function search() {
-                var query = html.find('.kinogo-query').val().trim();
-                if (!query) {
-                    Lampa.Noty.show('Введи название фильма');
-                    return;
-                }
-
-                var url = 'https://kinogo.ec/index.php?do=search&subaction=search&story=' +
-                    encodeURIComponent(query);
-
-                Lampa.Noty.show('Открываю результаты Kinogo…');
-
-                Lampa.Activity.push({
-                    url: url,
-                    title: 'Результаты Kinogo',
-                    component: 'book',
-                    page: 1
-                });
-            }
-
-            this.start = function () {};
-            this.pause = function () {};
-            this.stop = function () {};
-            this.render = function () { return html; };
-            this.destroy = function () { html.remove(); };
-        }
-
-        Lampa.Component.add('kinogo_main', Kinogo);
-
-        function addMenu() {
-            var menu = $('.menu .menu__list').eq(0);
-            if (!menu.length || menu.find('.kinogo-menu-item').length) return;
-
-            var button = $(
-                '<li class="menu__item selector kinogo-menu-item">' +
-                '<div class="menu__ico">🎬</div>' +
-                '<div class="menu__text">Kinogo</div></li>'
+                    '<div style="opacity:.7">' +
+                        'Плагин подключён к Lampa.' +
+                    '</div>' +
+                '</div>'
             );
 
-            button.on('hover:enter', function () {
-                Lampa.Activity.push({
-                    url: '',
-                    title: 'Kinogo',
-                    component: 'kinogo_main',
-                    page: 1
-                });
-            });
+            this.activity.render()
+                .find('.activity__body')
+                .append(html);
 
-            menu.append(button);
-        }
+            this.activity.loader(false);
+        };
 
-        if (window.appready) {
-            addMenu();
-        } else {
-            Lampa.Listener.follow('app', function (event) {
-                if (event.type === 'ready') addMenu();
-            });
+        this.start = function () {};
+        this.pause = function () {};
+        this.stop = function () {};
+
+        this.render = function () {
+            return html;
+        };
+
+        this.destroy = function () {
+            html.remove();
+        };
+    }
+
+    function registerComponent() {
+        if (!Lampa.Component.get(COMPONENT)) {
+            Lampa.Component.add(COMPONENT, Kinogo);
         }
     }
 
-    function wait() {
-        if (typeof Lampa !== 'undefined' &&
-            Lampa.Manifest && Lampa.Component && Lampa.Activity) {
-            if (!Lampa.Manifest.app_digital ||
-                Lampa.Manifest.app_digital >= 300) {
-                startPlugin();
+    function addMenu() {
+        var menu = $('.menu .menu__list').eq(0);
+
+        if (!menu.length) return false;
+
+        if (menu.find('.' + MENU_CLASS).length) {
+            return true;
+        }
+
+        var button = $(
+            '<li class="menu__item selector ' + MENU_CLASS + '">' +
+                '<div class="menu__ico">' +
+                    '<svg width="44" height="44" viewBox="0 0 44 44" ' +
+                    'xmlns="http://www.w3.org/2000/svg">' +
+                        '<rect x="5" y="8" width="34" height="28" ' +
+                        'rx="4" fill="currentColor" opacity=".2"/>' +
+                        '<path d="M17 14 L17 30 L30 22 Z" ' +
+                        'fill="currentColor"/>' +
+                    '</svg>' +
+                '</div>' +
+                '<div class="menu__text">Kinogo</div>' +
+            '</li>'
+        );
+
+        button.on('hover:enter', function () {
+            registerComponent();
+
+            Lampa.Activity.push({
+                url: '',
+                title: 'Kinogo',
+                component: COMPONENT,
+                page: 1
+            });
+        });
+
+        menu.append(button);
+
+        return true;
+    }
+
+    function init() {
+        registerComponent();
+
+        var attempts = 0;
+        var timer = setInterval(function () {
+            attempts++;
+
+            registerComponent();
+
+            if (addMenu() || attempts >= 20) {
+                clearInterval(timer);
+            }
+        }, 500);
+    }
+
+    function waitForLampa() {
+        if (
+            window.Lampa &&
+            Lampa.Component &&
+            Lampa.Activity &&
+            Lampa.Listener
+        ) {
+            if (window.appready) {
+                init();
+            } else {
+                Lampa.Listener.follow('app', function (event) {
+                    if (event.type === 'ready') {
+                        init();
+                    }
+                });
+
+                // На случай, если событие ready уже прошло.
+                setTimeout(function () {
+                    if (window.appready) init();
+                }, 1000);
             }
         } else {
-            setTimeout(wait, 500);
+            setTimeout(waitForLampa, 300);
         }
     }
 
-    wait();
+    waitForLampa();
 })();
