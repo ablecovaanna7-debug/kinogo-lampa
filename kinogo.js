@@ -5,7 +5,13 @@
     window.kinogo_plugin_ready = true;
 
     var COMPONENT = 'kinogo_main';
-    var MENU_CLASS = 'kinogo-menu-item';
+    var initialized = false;
+
+    var ICON =
+        '<svg viewBox="0 0 24 24" width="24" height="24" ' +
+        'xmlns="http://www.w3.org/2000/svg">' +
+        '<path fill="currentColor" d="M4 4h16a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2zm0 3v10h16V7H4zm5 1 7 4-7 4V8z"/>' +
+        '</svg>';
 
     function Kinogo() {
         var html = $('<div class="kinogo-page"></div>');
@@ -13,10 +19,10 @@
         this.create = function () {
             html.html(
                 '<div style="padding:2em">' +
-                    '<div style="font-size:2em;margin-bottom:1em">Kinogo</div>' +
-                    '<div style="opacity:.7">' +
-                        'Плагин подключён к Lampa.' +
+                    '<div style="font-size:2em;margin-bottom:1em">' +
+                        'Kinogo' +
                     '</div>' +
+                    '<div>Плагин подключён.</div>' +
                 '</div>'
             );
 
@@ -27,7 +33,23 @@
             this.activity.loader(false);
         };
 
-        this.start = function () {};
+        this.start = function () {
+            Lampa.Controller.add(COMPONENT, {
+                toggle: function () {
+                    Lampa.Controller.collectionSet(html);
+                    Lampa.Controller.collectionFocus(false, html);
+                },
+                left: function () {
+                    Lampa.Controller.toggle('menu');
+                },
+                back: function () {
+                    Lampa.Activity.backward();
+                }
+            });
+
+            Lampa.Controller.toggle(COMPONENT);
+        };
+
         this.pause = function () {};
         this.stop = function () {};
 
@@ -40,63 +62,64 @@
         };
     }
 
-    function registerComponent() {
-        if (!Lampa.Component.get(COMPONENT)) {
-            Lampa.Component.add(COMPONENT, Kinogo);
-        }
-    }
-
-    function addMenu() {
-        var menu = $('.menu .menu__list').eq(0);
-
-        if (!menu.length) return false;
-
-        if (menu.find('.' + MENU_CLASS).length) {
-            return true;
-        }
-
-        var button = $(
-            '<li class="menu__item selector ' + MENU_CLASS + '">' +
-                '<div class="menu__ico">' +
-                    '<svg width="44" height="44" viewBox="0 0 44 44" ' +
-                    'xmlns="http://www.w3.org/2000/svg">' +
-                        '<rect x="5" y="8" width="34" height="28" ' +
-                        'rx="4" fill="currentColor" opacity=".2"/>' +
-                        '<path d="M17 14 L17 30 L30 22 Z" ' +
-                        'fill="currentColor"/>' +
-                    '</svg>' +
-                '</div>' +
-                '<div class="menu__text">Kinogo</div>' +
-            '</li>'
-        );
-
-        button.on('hover:enter', function () {
-            registerComponent();
-
-            Lampa.Activity.push({
-                url: '',
-                title: 'Kinogo',
-                component: COMPONENT,
-                page: 1
-            });
+    function openKinogo() {
+        Lampa.Activity.push({
+            url: '',
+            title: 'Kinogo',
+            component: COMPONENT,
+            page: 1
         });
-
-        menu.append(button);
-
-        return true;
     }
 
     function init() {
-        registerComponent();
+        if (initialized) return;
+        initialized = true;
 
+        try {
+            Lampa.Component.add(COMPONENT, Kinogo);
+
+            if (
+                Lampa.Menu &&
+                typeof Lampa.Menu.addButton === 'function'
+            ) {
+                Lampa.Menu.addButton(ICON, 'Kinogo', openKinogo);
+            } else {
+                addFallbackMenu();
+            }
+
+            console.log('[Kinogo] Plugin initialized');
+        } catch (error) {
+            console.error('[Kinogo] Initialization error:', error);
+        }
+    }
+
+    function addFallbackMenu() {
         var attempts = 0;
+
         var timer = setInterval(function () {
             attempts++;
 
-            registerComponent();
+            var menu = $('.menu .menu__list').eq(0);
 
-            if (addMenu() || attempts >= 20) {
+            if (
+                menu.length &&
+                !menu.find('.kinogo-menu-item').length
+            ) {
+                var button = $(
+                    '<li class="menu__item selector kinogo-menu-item">' +
+                        '<div class="menu__ico">' + ICON + '</div>' +
+                        '<div class="menu__text">Kinogo</div>' +
+                    '</li>'
+                );
+
+                button.on('hover:enter', openKinogo);
+                menu.append(button);
                 clearInterval(timer);
+            }
+
+            if (attempts >= 40) {
+                clearInterval(timer);
+                console.error('[Kinogo] Menu was not found');
             }
         }, 500);
     }
@@ -105,25 +128,19 @@
         if (
             window.Lampa &&
             Lampa.Component &&
+            typeof Lampa.Component.add === 'function' &&
             Lampa.Activity &&
-            Lampa.Listener
+            Lampa.Controller
         ) {
             if (window.appready) {
                 init();
             } else {
                 Lampa.Listener.follow('app', function (event) {
-                    if (event.type === 'ready') {
-                        init();
-                    }
+                    if (event.type === 'ready') init();
                 });
-
-                // На случай, если событие ready уже прошло.
-                setTimeout(function () {
-                    if (window.appready) init();
-                }, 1000);
             }
         } else {
-            setTimeout(waitForLampa, 300);
+            setTimeout(waitForLampa, 500);
         }
     }
 
