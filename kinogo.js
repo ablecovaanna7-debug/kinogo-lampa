@@ -6,7 +6,7 @@
     var PAGE_CLASS = 'kinogo-page';
 
     var activePage = null;
-    var inputObserver = null;
+    var documentObserver = null;
     var keyboardWatchTimer = null;
     var searchTimer = null;
     var requestNumber = 0;
@@ -112,16 +112,18 @@
     }
 
     /*
-     * Исправленный ввод с поддержкой печати,
-     * Backspace, Delete и выделения текста.
+     * Обработчик ручного ввода.
+     * Устанавливается на фактическое поле в DOM.
      */
     function installKeyboard(input) {
-        if (!input || input.dataset.kinogoKeyboard === '1') return;
+        if (!input || input.dataset.kinogoKeyboard === 'installed') {
+            return;
+        }
 
         input.disabled = false;
         input.readOnly = false;
         input.style.pointerEvents = 'auto';
-        input.dataset.kinogoKeyboard = '1';
+        input.dataset.kinogoKeyboard = 'installed';
 
         input.addEventListener('keydown', function (e) {
             if (
@@ -201,36 +203,32 @@
     }
 
     /*
-     * Проверяем поле во всём документе.
-     * Это нужно, если Lampa пересоздаёт элементы страницы.
+     * Наблюдаем за всем документом.
+     * Lampa может подключать страницу после её создания.
      */
+    function scanInputs() {
+        document
+            .querySelectorAll('.' + PAGE_CLASS + ' input')
+            .forEach(function (input) {
+                installKeyboard(input);
+            });
+    }
+
     function startKeyboardWatch() {
-        function checkInputs() {
-            document
-                .querySelectorAll('.' + PAGE_CLASS + ' input')
-                .forEach(function (input) {
-                    installKeyboard(input);
-                });
+        scanInputs();
+
+        if (!documentObserver && document.documentElement) {
+            documentObserver = new MutationObserver(scanInputs);
+
+            documentObserver.observe(document.documentElement, {
+                childList: true,
+                subtree: true
+            });
         }
 
-        checkInputs();
-
-        if (inputObserver) {
-            inputObserver.disconnect();
+        if (!keyboardWatchTimer) {
+            keyboardWatchTimer = setInterval(scanInputs, 300);
         }
-
-        inputObserver = new MutationObserver(checkInputs);
-
-        inputObserver.observe(document.documentElement, {
-            childList: true,
-            subtree: true
-        });
-
-        if (keyboardWatchTimer) {
-            clearInterval(keyboardWatchTimer);
-        }
-
-        keyboardWatchTimer = setInterval(checkInputs, 500);
     }
 
     function setStatus(message) {
@@ -428,9 +426,6 @@
         var input = page.querySelector('.kinogo-input');
         var form = page.querySelector('.kinogo-search');
 
-        installKeyboard(input);
-        startKeyboardWatch();
-
         input.addEventListener('input', function () {
             clearTimeout(searchTimer);
 
@@ -471,9 +466,11 @@
             document.body.appendChild(page);
         }
 
+        startKeyboardWatch();
+
         setTimeout(startKeyboardWatch, 0);
-        setTimeout(startKeyboardWatch, 300);
-        setTimeout(startKeyboardWatch, 1000);
+        setTimeout(startKeyboardWatch, 250);
+        setTimeout(startKeyboardWatch, 800);
     }
 
     function addMenuItem() {
