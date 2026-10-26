@@ -2,14 +2,18 @@
     'use strict';
 
     var API = 'https://kinogo-search-proxy-inky.vercel.app/api/search?q=';
-    var STYLE_ID = 'kinogo-plugin-styles';
-    var PAGE_CLASS = 'kinogo-page';
-
+    var STYLE_ID = 'kinogo-catalog-styles';
     var activePage = null;
-    var documentObserver = null;
-    var keyboardWatchTimer = null;
-    var searchTimer = null;
-    var requestNumber = 0;
+    var catalog = [];
+
+    var categories = [
+        { title: 'Популярное', query: '2025' },
+        { title: 'Фильмы 2026', query: '2026' },
+        { title: 'Боевики', query: 'боевик' },
+        { title: 'Комедии', query: 'комедия' },
+        { title: 'Фантастика', query: 'фантастика' },
+        { title: 'Сериалы', query: 'сериал' }
+    ];
 
     function addStyles() {
         if (document.getElementById(STYLE_ID)) return;
@@ -17,85 +21,113 @@
         var style = document.createElement('style');
         style.id = STYLE_ID;
         style.textContent = `
-            .kinogo-page {
+            .kg-catalog {
                 width: 100%;
                 height: 100%;
-                overflow-y: auto;
+                overflow: auto;
                 padding: 24px;
+                background: #111;
+                color: #fff;
                 box-sizing: border-box;
-                color: #fff;
             }
-            .kinogo-page * { box-sizing: border-box; }
-            .kinogo-title {
-                font-size: 28px;
+            .kg-catalog * { box-sizing: border-box; }
+            .kg-heading {
+                font-size: 30px;
                 font-weight: 700;
-                margin-bottom: 20px;
+                margin-bottom: 6px;
             }
-            .kinogo-search {
+            .kg-subtitle {
+                color: #aaa;
+                margin-bottom: 24px;
+            }
+            .kg-categories {
                 display: flex;
-                gap: 10px;
-                width: 100%;
-                margin-bottom: 16px;
+                flex-wrap: wrap;
+                gap: 8px;
+                margin-bottom: 24px;
             }
-            .kinogo-input {
-                flex: 1;
-                min-width: 0;
-                padding: 14px;
-                border: 2px solid #444;
-                border-radius: 8px;
-                background: #222;
+            .kg-category {
+                padding: 10px 16px;
+                border: 1px solid #444;
+                border-radius: 20px;
+                background: #242424;
                 color: #fff;
-                font-size: 18px;
-                pointer-events: auto !important;
-                user-select: text !important;
-                -webkit-user-select: text !important;
-                outline: none;
+                font-size: 15px;
             }
-            .kinogo-input:focus { border-color: #888; }
-            .kinogo-button {
-                padding: 12px 20px;
-                border: 0;
-                border-radius: 8px;
+            .kg-category.active,
+            .kg-category:focus {
                 background: #fff;
                 color: #111;
-                font-size: 16px;
-                cursor: pointer;
             }
-            .kinogo-status {
-                margin: 16px 0;
-                color: #bbb;
+            .kg-grid {
+                display: grid;
+                grid-template-columns: repeat(auto-fill, minmax(155px, 1fr));
+                gap: 16px;
             }
-            .kinogo-results {
-                display: flex;
-                flex-direction: column;
-                gap: 8px;
-                margin-top: 18px;
-            }
-            .kinogo-result {
-                display: block;
-                width: 100%;
-                padding: 15px;
-                border: 1px solid #333;
-                border-radius: 8px;
-                background: #1b1b1b;
+            .kg-card {
+                min-width: 0;
+                padding: 0;
+                overflow: hidden;
+                border: 1px solid #303030;
+                border-radius: 12px;
+                background: #1c1c1c;
                 color: #fff;
                 text-align: left;
-                cursor: pointer;
             }
-            .kinogo-result:focus,
-            .kinogo-result:hover { background: #303030; }
-            .kinogo-result-title {
+            .kg-card:focus,
+            .kg-card:hover {
+                border-color: #aaa;
+                background: #292929;
+            }
+            .kg-poster {
+                height: 215px;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                padding: 12px;
+                background: linear-gradient(145deg, #292929, #111);
+                text-align: center;
                 font-size: 17px;
-                font-weight: 600;
+                font-weight: 700;
             }
-            .kinogo-result-url {
-                margin-top: 6px;
-                color: #999;
-                font-size: 12px;
-                overflow-wrap: anywhere;
+            .kg-card-title {
+                padding: 12px;
+                font-size: 14px;
+                line-height: 1.4;
+                min-height: 58px;
+            }
+            .kg-state {
+                padding: 20px 0;
+                color: #aaa;
+            }
+            .kg-back {
+                padding: 10px 14px;
+                margin-bottom: 16px;
+                border: 1px solid #555;
+                border-radius: 8px;
+                background: #292929;
+                color: #fff;
+            }
+            .kg-player {
+                width: 100%;
+                height: 70vh;
+                border: 0;
+                background: #000;
+            }
+            .kg-player-title {
+                margin: 12px 0;
+                font-size: 22px;
+                font-weight: 700;
+            }
+            @media (max-width: 600px) {
+                .kg-catalog { padding: 14px; }
+                .kg-grid {
+                    grid-template-columns: repeat(2, minmax(0, 1fr));
+                    gap: 10px;
+                }
+                .kg-poster { height: 190px; }
             }
         `;
-
         document.head.appendChild(style);
     }
 
@@ -111,221 +143,86 @@
         });
     }
 
-    /*
-     * Обработчик ручного ввода.
-     * Устанавливается на фактическое поле в DOM.
-     */
-    function installKeyboard(input) {
-        if (!input || input.dataset.kinogoKeyboard === 'installed') {
-            return;
-        }
-
-        input.disabled = false;
-        input.readOnly = false;
-        input.style.pointerEvents = 'auto';
-        input.dataset.kinogoKeyboard = 'installed';
-
-        input.addEventListener('keydown', function (e) {
-            if (
-                e.key.length === 1 &&
-                !e.ctrlKey &&
-                !e.metaKey &&
-                !e.altKey
-            ) {
-                e.preventDefault();
-                e.stopPropagation();
-
-                var start = input.selectionStart == null
-                    ? input.value.length
-                    : input.selectionStart;
-
-                var end = input.selectionEnd == null
-                    ? input.value.length
-                    : input.selectionEnd;
-
-                input.value =
-                    input.value.slice(0, start) +
-                    e.key +
-                    input.value.slice(end);
-
-                var pos = start + e.key.length;
-                input.setSelectionRange(pos, pos);
-
-                input.dispatchEvent(new Event('input', {
-                    bubbles: true
-                }));
-
-                return;
+    function getResults(query) {
+        return fetch(API + encodeURIComponent(query), {
+            headers: { Accept: 'application/json' }
+        }).then(function (response) {
+            if (!response.ok) {
+                throw new Error('HTTP ' + response.status);
             }
+            return response.json();
+        }).then(function (data) {
+            var items = Array.isArray(data)
+                ? data
+                : (data.results || data.items || []);
 
-            if (e.key === 'Backspace' || e.key === 'Delete') {
-                e.preventDefault();
-                e.stopPropagation();
+            var seen = {};
 
-                var start = input.selectionStart == null
-                    ? input.value.length
-                    : input.selectionStart;
+            return items.filter(function (item) {
+                if (!item || !item.title || !item.url) return false;
 
-                var end = input.selectionEnd == null
-                    ? input.value.length
-                    : input.selectionEnd;
-
-                if (start !== end) {
-                    input.value =
-                        input.value.slice(0, start) +
-                        input.value.slice(end);
-                } else if (e.key === 'Backspace' && start > 0) {
-                    input.value =
-                        input.value.slice(0, start - 1) +
-                        input.value.slice(end);
-
-                    start--;
-                } else if (
-                    e.key === 'Delete' &&
-                    start < input.value.length
-                ) {
-                    input.value =
-                        input.value.slice(0, start) +
-                        input.value.slice(start + 1);
+                if (/регистрация|забыли пароль|восстановить пароль|войти|главная|случайный фильм/i.test(item.title)) {
+                    return false;
                 }
 
-                input.setSelectionRange(start, start);
+                try {
+                    var url = new URL(item.url);
 
-                input.dispatchEvent(new Event('input', {
-                    bubbles: true
-                }));
-            }
-        }, true);
+                    if (!/^https?:$/.test(url.protocol)) return false;
+                    if (!/(^|\.)kinogo\./i.test(url.hostname)) return false;
+                    if (seen[url.href]) return false;
 
-        input.addEventListener('click', function () {
-            input.focus();
+                    seen[url.href] = true;
+                    return true;
+                } catch (e) {
+                    return false;
+                }
+            });
         });
     }
 
-    /*
-     * Наблюдаем за всем документом.
-     * Lampa может подключать страницу после её создания.
-     */
-    function scanInputs() {
-        document
-            .querySelectorAll('.' + PAGE_CLASS + ' input')
-            .forEach(function (input) {
-                installKeyboard(input);
-            });
-    }
-
-    function startKeyboardWatch() {
-        scanInputs();
-
-        if (!documentObserver && document.documentElement) {
-            documentObserver = new MutationObserver(scanInputs);
-
-            documentObserver.observe(document.documentElement, {
-                childList: true,
-                subtree: true
-            });
-        }
-
-        if (!keyboardWatchTimer) {
-            keyboardWatchTimer = setInterval(scanInputs, 300);
-        }
-    }
-
     function setStatus(message) {
+        var state = activePage &&
+            activePage.querySelector('.kg-state');
+
+        if (state) state.textContent = message;
+    }
+
+    function renderCards(items) {
         if (!activePage) return;
 
-        var status = activePage.querySelector('.kinogo-status');
+        var grid = activePage.querySelector('.kg-grid');
+        if (!grid) return;
 
-        if (status) {
-            status.textContent = message;
-        }
-    }
+        catalog = items;
 
-    function normalizeResults(data) {
-        if (Array.isArray(data)) return data;
-        if (data && Array.isArray(data.results)) return data.results;
-        if (data && Array.isArray(data.items)) return data.items;
-
-        return [];
-    }
-
-    function validResult(item) {
-        if (!item || !item.title || !item.url) return false;
-
-        if (
-            /регистрация|забыли пароль|восстановить пароль|войти|главная|случайный фильм/i
-                .test(item.title)
-        ) {
-            return false;
-        }
-
-        try {
-            var url = new URL(item.url);
-
-            return (
-                (url.protocol === 'https:' || url.protocol === 'http:') &&
-                /(^|\.)kinogo\./i.test(url.hostname)
-            );
-        } catch (e) {
-            return false;
-        }
-    }
-
-    function openMovie(url) {
-        try {
-            var parsed = new URL(url);
-
-            if (!/(^|\.)kinogo\./i.test(parsed.hostname)) {
-                setStatus('Некорректная ссылка.');
-                return;
-            }
-
-            window.open(parsed.href, '_blank');
-        } catch (e) {
-            setStatus('Не удалось открыть фильм.');
-        }
-    }
-
-    function renderResults(items) {
-        if (!activePage) return;
-
-        var container = activePage.querySelector('.kinogo-results');
-
-        if (!container) return;
-
-        var results = items.filter(validResult);
-
-        if (!results.length) {
-            container.innerHTML =
-                '<div class="kinogo-status">Фильмы не найдены.</div>';
-
+        if (!items.length) {
+            grid.innerHTML = '';
+            setStatus('Фильмы не найдены. Попробуй другую категорию.');
             return;
         }
 
-        container.innerHTML = results.map(function (item, index) {
+        setStatus('Найдено фильмов: ' + items.length);
+
+        grid.innerHTML = items.map(function (item, index) {
             return `
-                <button
-                    class="kinogo-result selector"
-                    type="button"
-                    data-index="${index}"
-                >
-                    <div class="kinogo-result-title">
+                <button class="kg-card selector"
+                        type="button"
+                        data-index="${index}">
+                    <div class="kg-poster">
                         ${escapeHtml(item.title)}
                     </div>
-                    <div class="kinogo-result-url">
-                        ${escapeHtml(item.url)}
+                    <div class="kg-card-title">
+                        ${escapeHtml(item.title)}
                     </div>
                 </button>
             `;
         }).join('');
 
-        container.querySelectorAll('.kinogo-result').forEach(function (button) {
+        grid.querySelectorAll('.kg-card').forEach(function (button) {
             function selectMovie() {
-                var index = Number(button.dataset.index);
-
-                if (results[index]) {
-                    openMovie(results[index].url);
-                }
+                var item = catalog[Number(button.dataset.index)];
+                if (item) openMovie(item);
             }
 
             button.addEventListener('click', selectMovie);
@@ -333,123 +230,96 @@
         });
     }
 
-    async function search(query) {
-        query = String(query || '').trim();
+    function loadCategory(index) {
+        var category = categories[index] || categories[0];
 
-        if (query.length < 2) {
-            setStatus('Введи название фильма или сериала.');
-            return;
-        }
+        setStatus('Загружаем категорию «' + category.title + '»…');
 
-        var thisRequest = ++requestNumber;
+        var grid = activePage.querySelector('.kg-grid');
+        if (grid) grid.innerHTML = '';
 
-        setStatus('Ищем: ' + query + '…');
-
-        var container = activePage &&
-            activePage.querySelector('.kinogo-results');
-
-        if (container) {
-            container.innerHTML = '';
-        }
-
-        try {
-            var response = await fetch(
-                API + encodeURIComponent(query),
-                {
-                    method: 'GET',
-                    headers: {
-                        'Accept': 'application/json'
-                    }
-                }
-            );
-
-            if (!response.ok) {
-                throw new Error('HTTP ' + response.status);
-            }
-
-            var data = await response.json();
-
-            if (thisRequest !== requestNumber) return;
-
-            var items = normalizeResults(data);
-
-            renderResults(items);
-
-            var count = items.filter(validResult).length;
-
-            setStatus(
-                count
-                    ? 'Найдено результатов: ' + count
-                    : 'По запросу «' + query + '» ничего не найдено.'
-            );
-        } catch (error) {
-            console.error('[Kinogo] Search error:', error);
-
-            setStatus(
-                'Ошибка поиска. Проверь доступность поискового сервера.'
-            );
-        }
+        getResults(category.query).then(renderCards).catch(function (error) {
+            console.error('[Kinogo]', error);
+            setStatus('Ошибка загрузки каталога. Проверь поисковый сервер.');
+        });
     }
 
-    function createPage() {
-        addStyles();
+    function showCatalog() {
+        activePage.innerHTML = `
+            <div class="kg-heading">Kinogo</div>
+            <div class="kg-subtitle">Каталог фильмов и сериалов</div>
 
-        var page = document.createElement('div');
-        page.className = PAGE_CLASS;
-
-        page.innerHTML = `
-            <div class="kinogo-title">Kinogo</div>
-
-            <form class="kinogo-search">
-                <input
-                    class="kinogo-input"
-                    type="text"
-                    autocomplete="off"
-                    placeholder="Название фильма..."
-                    aria-label="Название фильма"
-                >
-
-                <button class="kinogo-button" type="submit">
-                    Найти
-                </button>
-            </form>
-
-            <div class="kinogo-status">
-                Введи название фильма или сериала.
+            <div class="kg-categories">
+                ${categories.map(function (category, index) {
+                    return `
+                        <button
+                            class="kg-category selector${index === 0 ? ' active' : ''}"
+                            type="button"
+                            data-category="${index}">
+                            ${escapeHtml(category.title)}
+                        </button>
+                    `;
+                }).join('')}
             </div>
 
-            <div class="kinogo-results"></div>
+            <div class="kg-state">Загружаем каталог…</div>
+            <div class="kg-grid"></div>
         `;
 
-        activePage = page;
+        activePage.querySelectorAll('.kg-category').forEach(function (button) {
+            function selectCategory() {
+                activePage.querySelectorAll('.kg-category').forEach(function (item) {
+                    item.classList.remove('active');
+                });
 
-        var input = page.querySelector('.kinogo-input');
-        var form = page.querySelector('.kinogo-search');
-
-        input.addEventListener('input', function () {
-            clearTimeout(searchTimer);
-
-            var query = input.value.trim();
-
-            if (query.length >= 2) {
-                searchTimer = setTimeout(function () {
-                    search(query);
-                }, 800);
+                button.classList.add('active');
+                loadCategory(Number(button.dataset.category));
             }
+
+            button.addEventListener('click', selectCategory);
+            button.addEventListener('hover:enter', selectCategory);
         });
 
-        form.addEventListener('submit', function (e) {
-            e.preventDefault();
-            e.stopPropagation();
+        loadCategory(0);
+    }
 
-            search(input.value);
-        });
+    function openMovie(item) {
+        activePage.innerHTML = `
+            <button class="kg-back selector" type="button">
+                ← Назад к каталогу
+            </button>
 
-        return page;
+            <div class="kg-player-title">
+                ${escapeHtml(item.title)}
+            </div>
+
+            <iframe
+                class="kg-player"
+                src="${escapeHtml(item.url)}"
+                allow="autoplay; fullscreen; picture-in-picture"
+                allowfullscreen>
+            </iframe>
+
+            <div class="kg-state">
+                Если видео не отображается, сайт может запрещать
+                воспроизведение во встроенном окне.
+            </div>
+        `;
+
+        var back = activePage.querySelector('.kg-back');
+
+        back.addEventListener('click', showCatalog);
+        back.addEventListener('hover:enter', showCatalog);
     }
 
     function openPage() {
-        var page = createPage();
+        addStyles();
+
+        var page = document.createElement('div');
+        page.className = 'kg-catalog';
+        activePage = page;
+
+        showCatalog();
 
         if (
             typeof Lampa !== 'undefined' &&
@@ -459,18 +329,12 @@
             Lampa.Activity.push({
                 url: '',
                 title: 'Kinogo',
-                component: 'kinogo_plugin',
+                component: 'kinogo_catalog',
                 page: page
             });
         } else {
             document.body.appendChild(page);
         }
-
-        startKeyboardWatch();
-
-        setTimeout(startKeyboardWatch, 0);
-        setTimeout(startKeyboardWatch, 250);
-        setTimeout(startKeyboardWatch, 800);
     }
 
     function addMenuItem() {
@@ -504,14 +368,9 @@
             return;
         }
 
-        if (
-            Lampa.Listener &&
-            typeof Lampa.Listener.follow === 'function'
-        ) {
+        if (Lampa.Listener && typeof Lampa.Listener.follow === 'function') {
             Lampa.Listener.follow('app', function (event) {
-                if (event.type === 'ready') {
-                    addMenuItem();
-                }
+                if (event.type === 'ready') addMenuItem();
             });
         }
 
