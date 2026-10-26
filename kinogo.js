@@ -1,12 +1,8 @@
 (function () {
     'use strict';
 
-    if (window.kinogoPluginLoaded) return;
-    window.kinogoPluginLoaded = true;
-
     var API_URL = 'https://kinogo-search-proxy-lampa-project.vercel.app/api/search?q=';
     var page = null;
-    var query = '';
 
     function init() {
         if (!window.Lampa || !Lampa.Listener) {
@@ -14,13 +10,11 @@
             return;
         }
 
-        if (window.appready) {
-            addMenu();
-        } else {
-            Lampa.Listener.follow('app', function (event) {
-                if (event.type === 'ready') addMenu();
-            });
-        }
+        Lampa.Listener.follow('app', function (event) {
+            if (event.type === 'ready') addMenu();
+        });
+
+        addMenu();
     }
 
     function addMenu() {
@@ -36,7 +30,6 @@
         var item = document.createElement('li');
         item.id = 'kinogo-menu-item';
         item.className = 'menu__item selector';
-
         item.innerHTML =
             '<div class="menu__ico">🎬</div>' +
             '<div class="menu__text">Kinogo</div>';
@@ -50,49 +43,82 @@
     function openPage() {
         if (page) page.remove();
 
-        query = '';
-
         page = document.createElement('div');
         page.className = 'kinogo-page';
-
         page.style.cssText =
             'position:fixed;inset:0;z-index:99999;' +
-            'background:#111;color:#fff;padding:35px;' +
+            'background:#111;color:#fff;padding:30px;' +
             'box-sizing:border-box;overflow:auto;';
 
         page.innerHTML = `
-            <div style="display:flex;align-items:center;gap:20px;margin-bottom:30px">
-                <div class="selector kg-back" style="padding:14px 22px;background:#2787f5;border-radius:10px;font-size:20px">
-                    ← Назад
-                </div>
-                <h1 style="font-size:32px;margin:0">Поиск фильмов Kinogo</h1>
+            <div style="display:flex;align-items:center;gap:20px;margin-bottom:25px">
+                <button class="kg-back" style="${buttonStyle()}">← Назад</button>
+                <h1 style="font-size:30px;margin:0">Kinogo</h1>
             </div>
 
-            <div class="selector kg-input" style="padding:18px;background:#222;border:2px solid #555;border-radius:10px;font-size:22px;margin-bottom:15px">
-                Введите название фильма
+            <form class="kg-form" style="display:flex;gap:10px;margin-bottom:25px">
+                <input class="kg-input" type="text"
+                    placeholder="Введите название фильма..."
+                    autocomplete="off"
+                    style="flex:1;min-width:0;padding:15px;font-size:20px;
+                    color:white;background:#222;border:2px solid #555;
+                    border-radius:8px;outline:none;">
+                <button type="submit" style="${buttonStyle()}">Найти</button>
+            </form>
+
+            <div class="kg-status" style="color:#aaa;margin-bottom:20px">
+                Введите название фильма с клавиатуры MacBook.
             </div>
 
-            <div class="selector kg-search" style="display:inline-block;padding:15px 30px;background:#2787f5;border-radius:10px;font-size:20px;margin-bottom:25px">
-                Найти
+            <div class="kg-results"
+                style="display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:15px">
             </div>
-
-            <div class="kg-status" style="font-size:20px;color:#aaa;margin-bottom:20px">
-                Нажмите на поле выше, чтобы открыть клавиатуру.
-            </div>
-
-            <div class="kg-results" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:15px"></div>
         `;
 
         document.body.appendChild(page);
 
-        page.querySelector('.kg-back').addEventListener('hover:enter', closePage);
+        var input = page.querySelector('.kg-input');
+        var form = page.querySelector('.kg-form');
+
         page.querySelector('.kg-back').addEventListener('click', closePage);
 
-        page.querySelector('.kg-input').addEventListener('hover:enter', showKeyboard);
-        page.querySelector('.kg-input').addEventListener('click', showKeyboard);
+        // Не позволяем обработчикам Lampa перехватывать ввод.
+        input.addEventListener('keydown', function (event) {
+            event.stopPropagation();
+        });
 
-        page.querySelector('.kg-search').addEventListener('hover:enter', search);
-        page.querySelector('.kg-search').addEventListener('click', search);
+        input.addEventListener('keyup', function (event) {
+            event.stopPropagation();
+        });
+
+        input.addEventListener('click', function (event) {
+            event.stopPropagation();
+            input.focus();
+        });
+
+        form.addEventListener('submit', function (event) {
+            event.preventDefault();
+            event.stopPropagation();
+
+            var query = input.value.trim();
+            if (query.length < 2) {
+                setStatus('Введите минимум 2 символа.');
+                input.focus();
+                return;
+            }
+
+            searchMovies(query);
+        });
+
+        // Передаём фокус полю ввода.
+        setTimeout(function () {
+            input.focus();
+        }, 100);
+    }
+
+    function buttonStyle() {
+        return 'padding:14px 22px;background:#2787f5;color:white;' +
+            'border:0;border-radius:8px;font-size:18px;cursor:pointer;';
     }
 
     function closePage() {
@@ -102,66 +128,14 @@
         }
     }
 
-    function showKeyboard() {
-        // Используем штатный механизм ввода Lampa.
-        if (window.Lampa && Lampa.Input && typeof Lampa.Input.show === 'function') {
-            try {
-                Lampa.Input.show({
-                    title: 'Поиск фильмов Kinogo',
-                    value: query,
-                    placeholder: 'Название фильма'
-                }, function (value) {
-                    if (typeof value === 'string') {
-                        query = value.trim();
-
-                        var field = page && page.querySelector('.kg-input');
-                        if (field) {
-                            field.textContent = query || 'Введите название фильма';
-                        }
-                    }
-                });
-                return;
-            } catch (error) {
-                console.error('[Kinogo] Lampa.Input:', error);
-            }
-        }
-
-        // Запасной вариант для сборок Lampa без Lampa.Input.show.
-        if (window.Lampa && Lampa.Modal && typeof Lampa.Modal.open === 'function') {
-            var html = document.createElement('div');
-            html.innerHTML = `
-                <div class="settings-param selector"
-                     data-type="input"
-                     data-name="kinogo_query"
-                     data-string="true"
-                     placeholder="Введите название фильма">
-                    <div class="settings-param__name">Название фильма</div>
-                    <div class="settings-param__value"></div>
-                </div>
-            `;
-
-            Lampa.Modal.open({
-                title: 'Поиск фильмов Kinogo',
-                html: html,
-                size: 'medium'
-            });
-
-            console.warn('[Kinogo] Открыт запасной диалог ввода.');
-        } else {
-            setStatus('В этой сборке Lampa не найден доступный механизм клавиатуры.');
-        }
+    function setStatus(text) {
+        if (!page) return;
+        var status = page.querySelector('.kg-status');
+        if (status) status.textContent = text;
     }
 
-    function setStatus(message) {
-        var status = page && page.querySelector('.kg-status');
-        if (status) status.textContent = message;
-    }
-
-    function search() {
-        if (!query || query.length < 2) {
-            showKeyboard();
-            return;
-        }
+    function searchMovies(query) {
+        if (!page) return;
 
         var results = page.querySelector('.kg-results');
         results.innerHTML = '';
@@ -182,7 +156,9 @@
                     var url = String(movie.url || movie.link || '').trim();
 
                     if (!title || !url) return false;
-                    if (/регистрация|забыли пароль|правообладател/i.test(title)) return false;
+                    if (/регистрация|забыли пароль|правообладател/i.test(title)) {
+                        return false;
+                    }
 
                     try {
                         var parsed = new URL(url);
@@ -194,7 +170,7 @@
                 });
 
                 if (!movies.length) {
-                    setStatus('Ничего не найдено.');
+                    setStatus('Фильмы не найдены. Попробуйте другое название.');
                     return;
                 }
 
@@ -207,32 +183,44 @@
                     var card = document.createElement('div');
                     card.className = 'selector';
                     card.style.cssText =
-                        'padding:20px;background:#222;border-radius:10px;' +
-                        'border:2px solid #383838;font-size:20px;';
+                        'padding:20px;background:#222;border:1px solid #444;' +
+                        'border-radius:10px;cursor:pointer;font-size:19px;';
 
                     card.textContent = title;
 
-                    function openMovie() {
-                        try {
-                            var parsed = new URL(url);
-                            if (/^https:$/.test(parsed.protocol) &&
-                                /(^|\.)kinogo\.(ec|cool|town|foo)$/i.test(parsed.hostname)) {
-                                window.open(parsed.href, '_blank');
-                            }
-                        } catch (e) {
-                            console.error('[Kinogo] URL:', e);
-                        }
-                    }
+                    card.addEventListener('click', function () {
+                        openMovie(url);
+                    });
 
-                    card.addEventListener('hover:enter', openMovie);
-                    card.addEventListener('click', openMovie);
+                    card.addEventListener('hover:enter', function () {
+                        openMovie(url);
+                    });
+
                     results.appendChild(card);
                 });
             })
             .catch(function (error) {
-                console.error('[Kinogo] Search error:', error);
-                setStatus('Ошибка поиска. Проверьте соединение.');
+                console.error('[Kinogo] Ошибка:', error);
+                setStatus('Ошибка поиска. Проверь соединение.');
             });
+    }
+
+    function openMovie(url) {
+        try {
+            var parsed = new URL(url);
+
+            if (
+                parsed.protocol !== 'https:' ||
+                !/(^|\.)kinogo\.(ec|cool|town|foo)$/i.test(parsed.hostname)
+            ) {
+                setStatus('Недопустимая ссылка.');
+                return;
+            }
+
+            window.open(parsed.href, '_blank');
+        } catch (error) {
+            console.error('[Kinogo] Ошибка ссылки:', error);
+        }
     }
 
     init();
