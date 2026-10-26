@@ -1,7 +1,7 @@
 (function () {
     'use strict';
 
-    var API_URL = 'https://kinogo-search-proxy-lampa-project.vercel.app/api/search?q=';
+    var API_URL = 'https://kinogo-search-proxy-inky.vercel.app/api/search?q=';
     var MENU_ID = 'kinogo-menu-item';
     var page = null;
     var query = '';
