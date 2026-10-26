@@ -1,51 +1,41 @@
 (function () {
     'use strict';
 
-    var API_URL = 'https://kinogo-search-proxy-inky.vercel.app/api/search?q=';
-    var PLUGIN_ID = 'kinogo_plugin';
+    var API = 'https://kinogo-search-proxy-inky.vercel.app/api/search?q=';
     var STYLE_ID = 'kinogo-plugin-styles';
+    var PAGE_CLASS = 'kinogo-page';
 
-    var currentPage = null;
-    var searchInput = null;
-    var searchResults = null;
-    var searchButton = null;
-    var statusElement = null;
-    var keyboardHandler = null;
+    var activePage = null;
+    var inputObserver = null;
     var searchTimer = null;
+    var requestNumber = 0;
 
     function addStyles() {
         if (document.getElementById(STYLE_ID)) return;
 
         var style = document.createElement('style');
         style.id = STYLE_ID;
-
         style.textContent = `
             .kinogo-page {
-                box-sizing: border-box;
                 width: 100%;
-                padding: 24px;
-                color: #fff;
-                font-size: 16px;
+                height: 100%;
                 overflow-y: auto;
-            }
-
-            .kinogo-page * {
+                padding: 24px;
                 box-sizing: border-box;
+                color: #fff;
             }
-
+            .kinogo-page * { box-sizing: border-box; }
             .kinogo-title {
                 font-size: 28px;
                 font-weight: 700;
                 margin-bottom: 20px;
             }
-
             .kinogo-search {
                 display: flex;
                 gap: 10px;
                 width: 100%;
                 margin-bottom: 16px;
             }
-
             .kinogo-input {
                 flex: 1;
                 min-width: 0;
@@ -55,16 +45,12 @@
                 background: #222;
                 color: #fff;
                 font-size: 18px;
+                pointer-events: auto !important;
+                user-select: text !important;
+                -webkit-user-select: text !important;
                 outline: none;
-                pointer-events: auto;
-                user-select: text;
-                -webkit-user-select: text;
             }
-
-            .kinogo-input:focus {
-                border-color: #777;
-            }
-
+            .kinogo-input:focus { border-color: #888; }
             .kinogo-button {
                 padding: 12px 20px;
                 border: 0;
@@ -74,25 +60,16 @@
                 font-size: 16px;
                 cursor: pointer;
             }
-
-            .kinogo-button:focus,
-            .kinogo-result:focus {
-                outline: 2px solid #fff;
-                outline-offset: 2px;
-            }
-
             .kinogo-status {
                 margin: 16px 0;
                 color: #bbb;
             }
-
             .kinogo-results {
                 display: flex;
                 flex-direction: column;
                 gap: 8px;
                 margin-top: 18px;
             }
-
             .kinogo-result {
                 display: block;
                 width: 100%;
@@ -104,59 +81,46 @@
                 text-align: left;
                 cursor: pointer;
             }
-
-            .kinogo-result:hover,
-            .kinogo-result:focus {
-                background: #303030;
-            }
-
+            .kinogo-result:focus,
+            .kinogo-result:hover { background: #303030; }
             .kinogo-result-title {
                 font-size: 17px;
                 font-weight: 600;
             }
-
             .kinogo-result-url {
                 margin-top: 6px;
                 color: #999;
                 font-size: 12px;
                 overflow-wrap: anywhere;
             }
-
-            .kinogo-empty {
-                padding: 20px 0;
-                color: #aaa;
-            }
         `;
-
         document.head.appendChild(style);
     }
 
     function escapeHtml(value) {
-        return String(value || '').replace(/[&<>"']/g, function (char) {
+        return String(value || '').replace(/[&<>"']/g, function (c) {
             return {
                 '&': '&amp;',
                 '<': '&lt;',
                 '>': '&gt;',
                 '"': '&quot;',
                 "'": '&#39;'
-            }[char];
+            }[c];
         });
     }
 
     /*
-     * Обработчик ручного ввода.
-     * Основан на коде, который заработал в Console.
+     * Рабочий обработчик ручного ввода.
+     * Устанавливается непосредственно на актуальное поле.
      */
-    function installInputHandler(input) {
-        if (!input) return;
+    function installKeyboard(input) {
+        if (!input || input.dataset.kinogoKeyboard === '1') return;
 
         input.disabled = false;
         input.readOnly = false;
         input.style.pointerEvents = 'auto';
 
-        if (input.dataset.kinogoKeyboardInstalled === '1') return;
-
-        input.dataset.kinogoKeyboardInstalled = '1';
+        input.dataset.kinogoKeyboard = '1';
 
         input.addEventListener('keydown', function (e) {
             if (
@@ -176,18 +140,17 @@
                     e.key +
                     input.value.slice(end);
 
-                var position = start + e.key.length;
+                var pos = start + e.key.length;
+                input.setSelectionRange(pos, pos);
 
-                input.setSelectionRange(position, position);
-
-                input.dispatchEvent(
-                    new Event('input', { bubbles: true })
-                );
+                input.dispatchEvent(new Event('input', {
+                    bubbles: true
+                }));
 
                 return;
             }
 
-            if (e.key === 'Backspace') {
+            if (e.key === 'Backspace' || e.key === 'Delete') {
                 e.preventDefault();
                 e.stopPropagation();
 
@@ -200,112 +163,124 @@
                         input.value.slice(end);
 
                     input.setSelectionRange(start, start);
-                } else if (start > 0) {
+                } else if (e.key === 'Backspace' && start > 0) {
                     input.value =
                         input.value.slice(0, start - 1) +
                         input.value.slice(end);
 
                     input.setSelectionRange(start - 1, start - 1);
-                }
-
-                input.dispatchEvent(
-                    new Event('input', { bubbles: true })
-                );
-
-                return;
-            }
-
-            if (e.key === 'Delete') {
-                e.preventDefault();
-                e.stopPropagation();
-
-                var start = input.selectionStart ?? input.value.length;
-                var end = input.selectionEnd ?? input.value.length;
-
-                if (start !== end) {
-                    input.value =
-                        input.value.slice(0, start) +
-                        input.value.slice(end);
-                } else if (start < input.value.length) {
+                } else if (
+                    e.key === 'Delete' &&
+                    start < input.value.length
+                ) {
                     input.value =
                         input.value.slice(0, start) +
                         input.value.slice(start + 1);
+
+                    input.setSelectionRange(start, start);
                 }
 
-                input.setSelectionRange(start, start);
-
-                input.dispatchEvent(
-                    new Event('input', { bubbles: true })
-                );
+                input.dispatchEvent(new Event('input', {
+                    bubbles: true
+                }));
             }
         }, true);
 
         input.addEventListener('click', function () {
             input.focus();
         });
+    }
 
-        input.addEventListener('input', function () {
-            clearTimeout(searchTimer);
+    /*
+     * Следит за пересозданием поля на странице.
+     */
+    function watchInput(page) {
+        if (inputObserver) {
+            inputObserver.disconnect();
+        }
 
-            if (input.value.trim().length >= 2) {
-                searchTimer = setTimeout(function () {
-                    performSearch(input.value.trim());
-                }, 800);
-            }
+        function checkInputs() {
+            if (!page.isConnected) return;
+
+            var inputs = page.querySelectorAll('input');
+
+            inputs.forEach(function (input) {
+                installKeyboard(input);
+            });
+        }
+
+        checkInputs();
+
+        inputObserver = new MutationObserver(checkInputs);
+        inputObserver.observe(page, {
+            childList: true,
+            subtree: true
         });
     }
 
-    function showStatus(message) {
-        if (statusElement) {
-            statusElement.textContent = message;
-        }
+    function setStatus(message) {
+        if (!activePage) return;
+
+        var status = activePage.querySelector('.kinogo-status');
+        if (status) status.textContent = message;
     }
 
     function normalizeResults(data) {
         if (Array.isArray(data)) return data;
         if (data && Array.isArray(data.results)) return data.results;
         if (data && Array.isArray(data.items)) return data.items;
-
         return [];
     }
 
-    function isUsefulResult(item) {
+    function validResult(item) {
         if (!item || !item.title || !item.url) return false;
 
-        var title = String(item.title).trim();
-        var url = String(item.url).trim();
-
-        if (title.length < 2) return false;
-
-        if (/регистрация|забыли пароль|восстановить пароль|войти|главная|случайный фильм/i.test(title)) {
+        if (/регистрация|забыли пароль|восстановить пароль|войти|главная|случайный фильм/i.test(item.title)) {
             return false;
         }
 
         try {
-            var parsed = new URL(url);
+            var url = new URL(item.url);
 
-            if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') {
-                return false;
-            }
-
-            return /kinogo\./i.test(parsed.hostname);
+            return (
+                (url.protocol === 'https:' || url.protocol === 'http:') &&
+                /(^|\.)kinogo\./i.test(url.hostname)
+            );
         } catch (e) {
             return false;
         }
     }
 
+    function openMovie(url) {
+        try {
+            var parsed = new URL(url);
+
+            if (!/(^|\.)kinogo\./i.test(parsed.hostname)) {
+                setStatus('Некорректная ссылка.');
+                return;
+            }
+
+            window.open(parsed.href, '_blank');
+        } catch (e) {
+            setStatus('Не удалось открыть фильм.');
+        }
+    }
+
     function renderResults(items) {
-        if (!searchResults) return;
+        if (!activePage) return;
 
-        var filtered = items.filter(isUsefulResult);
+        var container = activePage.querySelector('.kinogo-results');
+        if (!container) return;
 
-        if (!filtered.length) {
-            searchResults.innerHTML =
-                '<div class="kinogo-empty">Фильмы не найдены. Попробуй изменить название.</div>';
+        var results = items.filter(validResult);
+
+        if (!results.length) {
+            container.innerHTML =
+                '<div class="kinogo-status">Фильмы не найдены.</div>';
             return;
         }
 
-        searchResults.innerHTML = filtered.map(function (item, index) {
+        container.innerHTML = results.map(function (item, index) {
             return `
                 <button class="kinogo-result selector"
                         type="button"
@@ -320,97 +295,79 @@
             `;
         }).join('');
 
-        var buttons = searchResults.querySelectorAll('.kinogo-result');
-
-        buttons.forEach(function (button, index) {
+        container.querySelectorAll('.kinogo-result').forEach(function (button) {
             button.addEventListener('click', function () {
-                openMovie(filtered[index].url);
+                var index = Number(button.dataset.index);
+                openMovie(results[index].url);
             });
 
-            button.addEventListener('keydown', function (e) {
-                if (e.key === 'Enter') {
-                    e.preventDefault();
-                    openMovie(filtered[index].url);
-                }
+            button.addEventListener('hover:enter', function () {
+                var index = Number(button.dataset.index);
+                openMovie(results[index].url);
             });
         });
     }
 
-    async function performSearch(query) {
+    async function search(query) {
         query = String(query || '').trim();
 
         if (query.length < 2) {
-            showStatus('Введи название фильма или сериала.');
+            setStatus('Введи название фильма или сериала.');
             return;
         }
 
-        showStatus('Ищем: ' + query + '…');
+        var thisRequest = ++requestNumber;
 
-        if (searchResults) {
-            searchResults.innerHTML = '';
-        }
+        setStatus('Ищем: ' + query + '…');
+
+        var container = activePage.querySelector('.kinogo-results');
+        if (container) container.innerHTML = '';
 
         try {
             var response = await fetch(
-                API_URL + encodeURIComponent(query),
+                API + encodeURIComponent(query),
                 {
                     method: 'GET',
-                    headers: {
-                        'Accept': 'application/json'
-                    }
+                    headers: { 'Accept': 'application/json' }
                 }
             );
 
             if (!response.ok) {
-                throw new Error('Ошибка сервера: ' + response.status);
+                throw new Error('HTTP ' + response.status);
             }
 
             var data = await response.json();
-            var items = normalizeResults(data);
 
+            if (thisRequest !== requestNumber) return;
+
+            var items = normalizeResults(data);
             renderResults(items);
 
-            var count = items.filter(isUsefulResult).length;
+            var count = items.filter(validResult).length;
 
-            showStatus(
+            setStatus(
                 count
                     ? 'Найдено результатов: ' + count
                     : 'По запросу «' + query + '» ничего не найдено.'
             );
         } catch (error) {
-            console.error('[Kinogo] Ошибка поиска:', error);
-            showStatus('Ошибка поиска. Проверь подключение к прокси.');
-        }
-    }
-
-    function openMovie(url) {
-        try {
-            var parsed = new URL(url);
-
-            if (!/kinogo\./i.test(parsed.hostname)) {
-                showStatus('Некорректная ссылка на фильм.');
-                return;
-            }
-
-            window.open(parsed.href, '_blank');
-        } catch (e) {
-            showStatus('Не удалось открыть страницу фильма.');
+            console.error('[Kinogo] Search error:', error);
+            setStatus('Ошибка поиска. Проверь доступность поискового сервера.');
         }
     }
 
     function createPage() {
         addStyles();
 
-        var oldPage = document.querySelector('.kinogo-page');
-
-        if (oldPage) {
-            oldPage.remove();
+        if (inputObserver) {
+            inputObserver.disconnect();
+            inputObserver = null;
         }
 
-        currentPage = document.createElement('div');
-        currentPage.className = 'kinogo-page';
+        var page = document.createElement('div');
+        page.className = PAGE_CLASS;
 
-        currentPage.innerHTML = `
+        page.innerHTML = `
             <div class="kinogo-title">Kinogo</div>
 
             <form class="kinogo-search">
@@ -434,110 +391,95 @@
             <div class="kinogo-results"></div>
         `;
 
-        document.body.appendChild(currentPage);
+        activePage = page;
 
-        searchInput = currentPage.querySelector('.kinogo-input');
-        searchResults = currentPage.querySelector('.kinogo-results');
-        searchButton = currentPage.querySelector('.kinogo-button');
-        statusElement = currentPage.querySelector('.kinogo-status');
+        var input = page.querySelector('.kinogo-input');
+        var form = page.querySelector('.kinogo-search');
 
-        installInputHandler(searchInput);
+        installKeyboard(input);
+        watchInput(page);
 
-        currentPage.querySelector('form').addEventListener('submit', function (e) {
+        input.addEventListener('input', function () {
+            clearTimeout(searchTimer);
+
+            var query = input.value.trim();
+
+            if (query.length >= 2) {
+                searchTimer = setTimeout(function () {
+                    search(query);
+                }, 800);
+            }
+        });
+
+        form.addEventListener('submit', function (e) {
             e.preventDefault();
             e.stopPropagation();
-
-            performSearch(searchInput.value);
+            search(input.value);
         });
 
-        searchButton.addEventListener('click', function (e) {
-            e.stopPropagation();
-        });
-
-        searchInput.addEventListener('focus', function () {
-            installInputHandler(searchInput);
-        });
-
-        searchInput.focus();
-
-        return currentPage;
+        return page;
     }
 
     function openPage() {
-        if (typeof Lampa === 'undefined') {
-            console.error('[Kinogo] Lampa не найдена.');
-            return;
-        }
+        var page = createPage();
 
-        createPage();
+        if (typeof Lampa !== 'undefined' &&
+            Lampa.Activity &&
+            typeof Lampa.Activity.push === 'function') {
 
-        if (Lampa.Activity && typeof Lampa.Activity.push === 'function') {
             Lampa.Activity.push({
                 url: '',
                 title: 'Kinogo',
                 component: 'kinogo_plugin',
-                page: currentPage
-            });
-        }
-    }
-
-    function registerPlugin() {
-        if (typeof Lampa === 'undefined') {
-            console.error('[Kinogo] Lampa не загружена.');
-            return;
-        }
-
-        if (Lampa.Manifest && typeof Lampa.Manifest.plugins === 'function') {
-            Lampa.Manifest.plugins([
-                {
-                    type: 'other',
-                    name: 'Kinogo',
-                    description: 'Поиск фильмов на Kinogo'
-                }
-            ]);
-        }
-
-        if (Lampa.Listener && typeof Lampa.Listener.follow === 'function') {
-            Lampa.Listener.follow('app', function (event) {
-                if (event.type === 'ready') {
-                    addMenuItem();
-                }
+                page: page
             });
         } else {
-            addMenuItem();
+            document.body.appendChild(page);
         }
     }
 
     function addMenuItem() {
         if (document.querySelector('.kinogo-menu-item')) return;
 
-        var menuList = document.querySelector('.menu .menu__list');
+        var menu = document.querySelector('.menu .menu__list');
 
-        if (!menuList) {
+        if (!menu) {
             setTimeout(addMenuItem, 1000);
             return;
         }
 
         var item = document.createElement('div');
         item.className = 'menu__item selector kinogo-menu-item';
+
         item.innerHTML = `
-            <div class="menu__ico">
-                <img src="https://www.google.com/s2/favicons?domain=kinogo.cool&sz=64"
-                     style="width:24px;height:24px;">
-            </div>
+            <div class="menu__ico">🎬</div>
             <div class="menu__text">Kinogo</div>
         `;
 
-        item.addEventListener('click', function () {
-            openPage();
-        });
+        item.addEventListener('click', openPage);
+        item.addEventListener('hover:enter', openPage);
 
-        item.addEventListener('hover:enter', function () {
-            openPage();
-        });
-
-        menuList.appendChild(item);
+        menu.appendChild(item);
     }
 
-    registerPlugin();
+    function init() {
+        if (typeof Lampa === 'undefined') {
+            setTimeout(init, 500);
+            return;
+        }
+
+        if (Lampa.Listener &&
+            typeof Lampa.Listener.follow === 'function') {
+
+            Lampa.Listener.follow('app', function (event) {
+                if (event.type === 'ready') {
+                    addMenuItem();
+                }
+            });
+        }
+
+        addMenuItem();
+    }
+
+    init();
 })();
