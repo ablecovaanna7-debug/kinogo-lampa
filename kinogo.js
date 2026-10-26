@@ -7,6 +7,7 @@
 
     var activePage = null;
     var inputObserver = null;
+    var keyboardWatchTimer = null;
     var searchTimer = null;
     var requestNumber = 0;
 
@@ -94,6 +95,7 @@
                 overflow-wrap: anywhere;
             }
         `;
+
         document.head.appendChild(style);
     }
 
@@ -110,8 +112,8 @@
     }
 
     /*
-     * Рабочий обработчик ручного ввода.
-     * Устанавливается непосредственно на актуальное поле.
+     * Исправленный ввод с поддержкой печати,
+     * Backspace, Delete и выделения текста.
      */
     function installKeyboard(input) {
         if (!input || input.dataset.kinogoKeyboard === '1') return;
@@ -119,7 +121,6 @@
         input.disabled = false;
         input.readOnly = false;
         input.style.pointerEvents = 'auto';
-
         input.dataset.kinogoKeyboard = '1';
 
         input.addEventListener('keydown', function (e) {
@@ -132,8 +133,13 @@
                 e.preventDefault();
                 e.stopPropagation();
 
-                var start = input.selectionStart ?? input.value.length;
-                var end = input.selectionEnd ?? input.value.length;
+                var start = input.selectionStart == null
+                    ? input.value.length
+                    : input.selectionStart;
+
+                var end = input.selectionEnd == null
+                    ? input.value.length
+                    : input.selectionEnd;
 
                 input.value =
                     input.value.slice(0, start) +
@@ -154,21 +160,24 @@
                 e.preventDefault();
                 e.stopPropagation();
 
-                var start = input.selectionStart ?? input.value.length;
-                var end = input.selectionEnd ?? input.value.length;
+                var start = input.selectionStart == null
+                    ? input.value.length
+                    : input.selectionStart;
+
+                var end = input.selectionEnd == null
+                    ? input.value.length
+                    : input.selectionEnd;
 
                 if (start !== end) {
                     input.value =
                         input.value.slice(0, start) +
                         input.value.slice(end);
-
-                    input.setSelectionRange(start, start);
                 } else if (e.key === 'Backspace' && start > 0) {
                     input.value =
                         input.value.slice(0, start - 1) +
                         input.value.slice(end);
 
-                    input.setSelectionRange(start - 1, start - 1);
+                    start--;
                 } else if (
                     e.key === 'Delete' &&
                     start < input.value.length
@@ -176,9 +185,9 @@
                     input.value =
                         input.value.slice(0, start) +
                         input.value.slice(start + 1);
-
-                    input.setSelectionRange(start, start);
                 }
+
+                input.setSelectionRange(start, start);
 
                 input.dispatchEvent(new Event('input', {
                     bubbles: true
@@ -192,50 +201,63 @@
     }
 
     /*
-     * Следит за пересозданием поля на странице.
+     * Проверяем поле во всём документе.
+     * Это нужно, если Lampa пересоздаёт элементы страницы.
      */
-    function watchInput(page) {
-        if (inputObserver) {
-            inputObserver.disconnect();
-        }
-
+    function startKeyboardWatch() {
         function checkInputs() {
-            if (!page.isConnected) return;
-
-            var inputs = page.querySelectorAll('input');
-
-            inputs.forEach(function (input) {
-                installKeyboard(input);
-            });
+            document
+                .querySelectorAll('.' + PAGE_CLASS + ' input')
+                .forEach(function (input) {
+                    installKeyboard(input);
+                });
         }
 
         checkInputs();
 
+        if (inputObserver) {
+            inputObserver.disconnect();
+        }
+
         inputObserver = new MutationObserver(checkInputs);
-        inputObserver.observe(page, {
+
+        inputObserver.observe(document.documentElement, {
             childList: true,
             subtree: true
         });
+
+        if (keyboardWatchTimer) {
+            clearInterval(keyboardWatchTimer);
+        }
+
+        keyboardWatchTimer = setInterval(checkInputs, 500);
     }
 
     function setStatus(message) {
         if (!activePage) return;
 
         var status = activePage.querySelector('.kinogo-status');
-        if (status) status.textContent = message;
+
+        if (status) {
+            status.textContent = message;
+        }
     }
 
     function normalizeResults(data) {
         if (Array.isArray(data)) return data;
         if (data && Array.isArray(data.results)) return data.results;
         if (data && Array.isArray(data.items)) return data.items;
+
         return [];
     }
 
     function validResult(item) {
         if (!item || !item.title || !item.url) return false;
 
-        if (/регистрация|забыли пароль|восстановить пароль|войти|главная|случайный фильм/i.test(item.title)) {
+        if (
+            /регистрация|забыли пароль|восстановить пароль|войти|главная|случайный фильм/i
+                .test(item.title)
+        ) {
             return false;
         }
 
@@ -270,6 +292,7 @@
         if (!activePage) return;
 
         var container = activePage.querySelector('.kinogo-results');
+
         if (!container) return;
 
         var results = items.filter(validResult);
@@ -277,14 +300,17 @@
         if (!results.length) {
             container.innerHTML =
                 '<div class="kinogo-status">Фильмы не найдены.</div>';
+
             return;
         }
 
         container.innerHTML = results.map(function (item, index) {
             return `
-                <button class="kinogo-result selector"
-                        type="button"
-                        data-index="${index}">
+                <button
+                    class="kinogo-result selector"
+                    type="button"
+                    data-index="${index}"
+                >
                     <div class="kinogo-result-title">
                         ${escapeHtml(item.title)}
                     </div>
@@ -296,15 +322,16 @@
         }).join('');
 
         container.querySelectorAll('.kinogo-result').forEach(function (button) {
-            button.addEventListener('click', function () {
+            function selectMovie() {
                 var index = Number(button.dataset.index);
-                openMovie(results[index].url);
-            });
 
-            button.addEventListener('hover:enter', function () {
-                var index = Number(button.dataset.index);
-                openMovie(results[index].url);
-            });
+                if (results[index]) {
+                    openMovie(results[index].url);
+                }
+            }
+
+            button.addEventListener('click', selectMovie);
+            button.addEventListener('hover:enter', selectMovie);
         });
     }
 
@@ -320,15 +347,21 @@
 
         setStatus('Ищем: ' + query + '…');
 
-        var container = activePage.querySelector('.kinogo-results');
-        if (container) container.innerHTML = '';
+        var container = activePage &&
+            activePage.querySelector('.kinogo-results');
+
+        if (container) {
+            container.innerHTML = '';
+        }
 
         try {
             var response = await fetch(
                 API + encodeURIComponent(query),
                 {
                     method: 'GET',
-                    headers: { 'Accept': 'application/json' }
+                    headers: {
+                        'Accept': 'application/json'
+                    }
                 }
             );
 
@@ -341,6 +374,7 @@
             if (thisRequest !== requestNumber) return;
 
             var items = normalizeResults(data);
+
             renderResults(items);
 
             var count = items.filter(validResult).length;
@@ -352,17 +386,15 @@
             );
         } catch (error) {
             console.error('[Kinogo] Search error:', error);
-            setStatus('Ошибка поиска. Проверь доступность поискового сервера.');
+
+            setStatus(
+                'Ошибка поиска. Проверь доступность поискового сервера.'
+            );
         }
     }
 
     function createPage() {
         addStyles();
-
-        if (inputObserver) {
-            inputObserver.disconnect();
-            inputObserver = null;
-        }
 
         var page = document.createElement('div');
         page.className = PAGE_CLASS;
@@ -397,7 +429,7 @@
         var form = page.querySelector('.kinogo-search');
 
         installKeyboard(input);
-        watchInput(page);
+        startKeyboardWatch();
 
         input.addEventListener('input', function () {
             clearTimeout(searchTimer);
@@ -414,6 +446,7 @@
         form.addEventListener('submit', function (e) {
             e.preventDefault();
             e.stopPropagation();
+
             search(input.value);
         });
 
@@ -423,10 +456,11 @@
     function openPage() {
         var page = createPage();
 
-        if (typeof Lampa !== 'undefined' &&
+        if (
+            typeof Lampa !== 'undefined' &&
             Lampa.Activity &&
-            typeof Lampa.Activity.push === 'function') {
-
+            typeof Lampa.Activity.push === 'function'
+        ) {
             Lampa.Activity.push({
                 url: '',
                 title: 'Kinogo',
@@ -436,6 +470,10 @@
         } else {
             document.body.appendChild(page);
         }
+
+        setTimeout(startKeyboardWatch, 0);
+        setTimeout(startKeyboardWatch, 300);
+        setTimeout(startKeyboardWatch, 1000);
     }
 
     function addMenuItem() {
@@ -449,6 +487,7 @@
         }
 
         var item = document.createElement('div');
+
         item.className = 'menu__item selector kinogo-menu-item';
 
         item.innerHTML = `
@@ -468,9 +507,10 @@
             return;
         }
 
-        if (Lampa.Listener &&
-            typeof Lampa.Listener.follow === 'function') {
-
+        if (
+            Lampa.Listener &&
+            typeof Lampa.Listener.follow === 'function'
+        ) {
             Lampa.Listener.follow('app', function (event) {
                 if (event.type === 'ready') {
                     addMenuItem();
